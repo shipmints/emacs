@@ -230,9 +230,6 @@ print the reporter message followed by the word \"done\".
     (defconst dock--dbus-service "com.canonical.Unity")
     (defconst dock--dbus-interface "com.canonical.Unity.LauncherEntry")
 
-    (defvar dock--dbus-desktop-id nil
-      "Constructed D-Bus application desktop id.")
-
     (defvar dock--dbus-attention nil
       "Non-nil when attention is enabled.")
 
@@ -241,14 +238,16 @@ print the reporter message followed by the word \"done\".
     (declare-function dock--dbus-clear-attention-on-frame-focus "dock")
 
     (defun dock--dbus-send-signal (message)
-      (dbus-send-signal
-       :session
-       dock--dbus-service
-       "/"
-       dock--dbus-interface
-       "Update"
-       dock--dbus-desktop-id
-       message))
+      (let ((api-uri (format "application://%s.desktop"
+                             dock-dbus-desktop-file-name)))
+        (dbus-send-signal
+         :session
+         dock--dbus-service
+         "/"
+         dock--dbus-interface
+         "Update"
+         api-uri
+         message)))
 
     (defun dock--dbus-clear-attention-on-frame-focus ()
       (when (and dock--dbus-attention
@@ -259,9 +258,6 @@ print the reporter message followed by the word \"done\".
         (dock-attention nil)))
 
     (cl-defmethod dock--enable (&context (dock--back-end (eql 'dbus)))
-      (setq dock--dbus-desktop-id
-            (format "application://%s.desktop"
-                    dock-dbus-desktop-file-name))
       (unless (dbus-ping
                :session
                dock--dbus-service
