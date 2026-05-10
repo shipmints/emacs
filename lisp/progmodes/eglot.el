@@ -2254,7 +2254,8 @@ If MODE, force MODE to be used for fontifying MARKUP."
        (calc2 (forced-mode)
          (cond
           (forced-mode              `(,forced-mode))
-          (built-in                 `(,#'markdown-ts-view-mode))
+          (built-in                 `(,#'markdown-ts-view-mode
+                                      ,#'markdown-ts-buffer-string))
           ((fboundp 'gfm-view-mode) `(,#'gfm-view-mode #'gfm-extract))
           (t                        `(#'text-mode))))
        (calc (s &optional (forced-mode mode) &aux (x (calc2 forced-mode)))
