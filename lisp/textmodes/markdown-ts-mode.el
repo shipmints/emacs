@@ -564,8 +564,14 @@ Set to nil to disable the lighter."
   :version "31.1"
   :package-version "1.0")
 
-(defcustom markdown-ts-pre-init-hook (list #'markdown-ts-add-final-newline)
-  "Hooks run before `markdown-ts-mode` initialization to prepare the buffer."
+(defcustom markdown-ts-view-mode-pre-init-hook (list #'markdown-ts-add-final-newline)
+  "Hooks run before `markdown-ts-view-mode` initialization.
+Functions on this list are intended to amend buffer content for
+`markdown-ts-view-mode' and tree-sitter Markdown grammar compatibility.
+
+For example, `markdown-ts-add-final-newline' ensures the grammar
+correctly parses markup at the end of the buffer that depends on a final
+newline."
   :type '(hook)
   :version "31.1"
   :package-version "1.0")
@@ -633,7 +639,7 @@ Set to nil to disable the lighter."
   "Face for Markdown link destinations (URLs)."
   :version "31.1")
 
-(defface markdown-ts-code-span '((t (:inherit font-lock-string-face)))
+(defface markdown-ts-code-span '((t (:inherit font-lock-keyword-face)))
   "Face for Markdown inline code spans."
   :version "31.1")
 
@@ -1145,7 +1151,8 @@ Elide trailing whitespace when hiding markup."
          (underline-end (treesit-node-end underline))
          (face 'markdown-ts-setext-heading))
     (font-lock--remove-face-from-text-property n-start n-end 'face face)
-    (font-lock-append-text-property content-start content-end 'face face)
+    ;; 1- content-end avoids the newline so it hides correctly.
+    (font-lock-append-text-property content-start (1- content-end) 'face face)
     (font-lock-append-text-property underline-start underline-end 'face face)
     (when markdown-ts-hide-markup
       ;; Hide heading_content trailing spaces.
@@ -1851,31 +1858,10 @@ Skip matches already inside tree-sitter link or autolink nodes."
    :language 'markdown-inline
    :override 'append
    :feature 'paragraph-inline
-   '(((strikethrough) @markdown-ts-strikethrough))
-   ;; ;; Order matters: most specific to least specific.
-   ;; '(;; ~ x ~ (strikethrough (emphasis_delimiter) ) : ( (emphasis_delimiter))
-   ;;   ;;                                           ^^^
-   ;;   ;;                                           inline text needs to be ignored
-   ;;   ((strikethrough ((emphasis_delimiter)
-   ;;                    :anchor
-   ;;                    _ @foo
-   ;;                    (emphasis_delimiter))
-   ;;                   (:match "\\`[~[:print:]]\\'" @foo)
-   ;;                   )
-   ;;    @default)
-   ;;   ;; ~~x~~ (strikethrough (emphasis_delimiter) (strikethrough (emphasis_delimiter) (emphasis_delimiter)) (emphasis_delimiter))
-   ;;   ((strikethrough (emphasis_delimiter) (strikethrough (emphasis_delimiter) (emphasis_delimiter)) (emphasis_delimiter))
-   ;;    @markdown-ts-strikethrough)
-   ;;   ;;  ~x~  (strikethrough (emphasis_delimiter) (emphasis_delimiter))
-   ;;   ((strikethrough (emphasis_delimiter) (emphasis_delimiter))
-   ;;    @markdown-ts-strikethrough))
-
-   :language 'markdown-inline
-   :override 'append
-   :feature 'paragraph-inline
    '(((link_destination) @markdown-ts--fontify-link-destination)
      ((emphasis) @markdown-ts-emphasis)
      ((strong_emphasis) @markdown-ts-bold)
+     ((strikethrough) @markdown-ts-strikethrough)
      (inline_link (link_text) @markdown-ts--fontify-link-node)
      (full_reference_link (link_text) @markdown-ts--fontify-link-node)
      (full_reference_link (link_label) @markdown-ts--fontify-link-node)
@@ -4407,13 +4393,18 @@ Note: To compute the column, point must be within the column and cannot
 be on the leading or trailing whitespace or on a column delimiter.
 
 ALIGN can be one of the symbols `left', `center', `right' or nil for
-unspecified or the characters l, c, or r.
+unspecified, or the characters l, c, or r.
 
 If ALIGN is nil, assume unspecified.  Make the alignment string a
 minimum of 5 characters to accommodate Markdown conventions.
 
 If point is not at a table, do nothing."
-  (interactive "cAlign column [l]eft [c]enter [r]ight [u]nspecified:")
+  (interactive
+   (list (car (read-multiple-choice
+               "Align column" '((?l "left")
+                                (?c "center")
+                                (?r "right")
+                                (?u "unspecified"))))))
   (markdown-ts--barf-if-not-mode 'markdown-ts-table-align-column)
   (setq align (if (characterp align)
                   (pcase align (?l 'left) (?c 'center) (?r 'right))
@@ -5205,7 +5196,6 @@ NOTE: Call this function only when the treesit `markdown' and
   (setq-local adaptive-fill-function #'markdown-ts--adaptive-fill)
 
   ;; Create and configure the parsers.
-  ;; +++ (treesit-parser-create 'markdown-inline)
   (setq treesit-primary-parser
         (treesit-parser-create 'markdown))
 
@@ -5378,7 +5368,6 @@ With a prefix argument, ARG, if needed, install parsers for `html',
   ;; own buffer-size guard (see bug#80909).
   (let ((treesit-max-buffer-size most-positive-fixnum))
     (cond ((treesit-ready-p '(markdown markdown-inline) t)
-           (run-hooks 'markdown-ts-pre-init-hook)
            (markdown-ts--set-up))
           (t
            (warn "markdown-ts-mode cannot be set up; using fundamental-mode.
@@ -5412,6 +5401,7 @@ NOTE: See `markdown-ts--set-up-inline'."
   (setq-local markdown-ts-fontify-code-blocks-natively t)
   (setq-local markdown-ts-enable-code-block-context-mode nil)
   (setq-local markdown-ts-enable-table-mode nil)
+  (run-hooks 'markdown-ts-view-mode-pre-init-hook)
   (markdown-ts-mode--initialize)
   (setq buffer-read-only t))
 
@@ -5421,7 +5411,7 @@ NOTE: See `markdown-ts--set-up-inline'."
 
 ;;;###autoload
 (defun markdown-ts-buffer-string ()
-  "Like `buffer-string', but burns in some overlays properties."
+  "Like `buffer-string', and convert overlay properties to text properties."
   (let ((str (buffer-string)))
     (dolist (ov (overlays-in (point-min) (point-max)) str)
       (when-let* ((face (overlay-get ov 'face)))
@@ -5439,9 +5429,10 @@ Prefix the error message with CONTEXT."
   "Add a final newline to the current buffer, if necessary."
   ;; Inspired by files.el.
   (let ((inhibit-read-only t))
-    (when (and (/= (char-after (1- (point-max))) ?\n)
-               (not (and (eq selective-display t)
-	                 (= (char-after (1- (point-max))) ?\r))))
+    (when (or (eq (buffer-size) 0)
+              (and (/= (char-after (1- (point-max))) ?\n)
+                   (not (and (eq selective-display t)
+	                     (= (char-after (1- (point-max))) ?\r)))))
       (save-excursion
 	(goto-char (point-max))
 	(insert ?\n)))))
